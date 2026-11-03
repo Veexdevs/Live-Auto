@@ -22,24 +22,26 @@ import {
 
 const THEME_PRESETS = [
   {
-    label: '🌎 Mix Geral (Recomendado)',
-    value: 'Conhecimentos Gerais, Curiosidades, Cultura Pop, Brasil, Esportes e Games',
+    label: '🌎 Mix Geral & Pop',
+    value:
+      'Conhecimentos Gerais, Filmes Disney/Pop, Curiosidades, Brasil, Esportes e Games',
+  },
+  {
+    label: '🎬 Disney, Filmes & Séries',
+    value: 'Filmes da Disney, Pixar, Marvel, Séries da Netflix e Cinema Pop',
   },
   {
     label: '⚽ Futebol & Esportes',
     value: 'Futebol Brasileiro, Copa do Mundo, Champions League, Craques e Esportes',
   },
   {
-    label: '🎬 Filmes, Séries & Pop',
-    value: 'Filmes famosos, Séries da Netflix, Marvel, Disney, Música Pop e Celebridades',
-  },
-  {
     label: '🎮 Games & Animes',
-    value: 'Games populares (Minecraft, GTA, Free Fire, Roblox) e Animes (Naruto, Dragon Ball, One Piece)',
+    value:
+      'Games populares (Minecraft, GTA, Free Fire, Roblox) e Animes (Naruto, Dragon Ball, One Piece)',
   },
   {
     label: '🇧🇷 Brasil & Curiosidades',
-    value: 'História do Brasil, Estados, Capitais, Comidas Típicas e Curiosidades Brasileiras',
+    value: 'História do Brasil, Estados, Capitais, Comidas Típicas e Curiosidades',
   },
   {
     label: '🔬 Ciência & Planeta',
@@ -47,7 +49,7 @@ const THEME_PRESETS = [
   },
   {
     label: '📖 Quiz Bíblico',
-    value: 'Histórias Bíblicas, Personagens do Antigo e Novo Testamento e Curiosidades da Bíblia',
+    value: 'Histórias Bíblicas, Personagens do Antigo e Novo Testamento',
   },
 ];
 
@@ -67,12 +69,12 @@ const POWER_ORDER = [
 ];
 
 export default function StudioControlPanel({
-  socket,
+  onAction,
   quizState,
   tiktokStatus,
   aiStatus,
-  giftCatalog,
-  feedItems,
+  giftCatalog = [],
+  feedItems = [],
 }) {
   const [activeTab, setActiveTab] = useState('live');
   const [usernameInput, setUsernameInput] = useState(
@@ -80,17 +82,14 @@ export default function StudioControlPanel({
   );
   const [connectingTikTok, setConnectingTikTok] = useState(false);
 
-  // Simulator inputs
   const [simUser, setSimUser] = useState('joao_vip');
   const [simComment, setSimComment] = useState('');
 
-  // AI & Rules local form state
   const [themeInput, setThemeInput] = useState(quizState?.config?.quizTheme || '');
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [savingConfig, setSavingConfig] = useState(false);
   const [savedToast, setSavedToast] = useState('');
 
-  // Manual player score form
   const [manualPlayer, setManualPlayer] = useState('');
   const [copiedObs, setCopiedObs] = useState(false);
 
@@ -101,18 +100,26 @@ export default function StudioControlPanel({
   }, [quizState?.config?.quizTheme]);
 
   useEffect(() => {
-    if (quizState?.config?.tiktokUsername && !usernameInput) {
-      setUsernameInput(quizState.config.tiktokUsername);
+    const target = tiktokStatus?.username || quizState?.config?.tiktokUsername;
+    if (target && !usernameInput) {
+      setUsernameInput(target);
     }
-  }, [quizState?.config?.tiktokUsername]);
+  }, [tiktokStatus?.username, quizState?.config?.tiktokUsername]);
 
   const config = quizState?.config || {};
   const giftPowers = config.giftPowers || {};
   const question = quizState?.question;
   const allPlayers = quizState?.allPlayers || quizState?.top5 || [];
 
+  const cleanUserParam = (usernameInput || tiktokStatus?.username || '')
+    .trim()
+    .replace(/^@/, '');
   const overlayUrl =
-    typeof window !== 'undefined' ? `${window.location.origin}/overlay` : '/overlay';
+    typeof window !== 'undefined'
+      ? `${window.location.origin}/overlay${
+          cleanUserParam ? `?user=${encodeURIComponent(cleanUserParam)}` : ''
+        }`
+      : '/overlay';
 
   const handleCopyOverlay = () => {
     navigator.clipboard?.writeText(overlayUrl);
@@ -120,21 +127,25 @@ export default function StudioControlPanel({
     setTimeout(() => setCopiedObs(false), 2000);
   };
 
-  const handleConnectTikTok = (e) => {
+  const handleConnectTikTok = async (e) => {
     e.preventDefault();
     if (!usernameInput.trim()) return;
     setConnectingTikTok(true);
-    socket?.emit('tiktok:connect', { username: usernameInput.trim() }, () => {
-      setConnectingTikTok(false);
+    await onAction('tiktok:set_user', {
+      username: usernameInput.trim(),
+      autoConnect: true,
     });
+    setConnectingTikTok(false);
+    setSavedToast('Automação TikTok Ativada!');
+    setTimeout(() => setSavedToast(''), 2000);
   };
 
   const handleDisconnectTikTok = () => {
-    socket?.emit('tiktok:disconnect');
+    onAction('tiktok:disconnect');
   };
 
   const handleToggleCrowd = () => {
-    socket?.emit('tiktok:simulate_crowd', {
+    onAction('tiktok:simulate_crowd', {
       active: !tiktokStatus?.simulationActive,
     });
   };
@@ -142,7 +153,7 @@ export default function StudioControlPanel({
   const sendSimChat = (text) => {
     const msg = text ?? simComment;
     if (!String(msg).trim()) return;
-    socket?.emit('simulate:chat', {
+    onAction('simulate:chat', {
       uniqueId: simUser || 'visitante_live',
       nickname: simUser || 'Visitante',
       comment: msg,
@@ -153,7 +164,7 @@ export default function StudioControlPanel({
   };
 
   const sendSimGift = (powerKey) => {
-    socket?.emit('simulate:gift', {
+    onAction('simulate:gift', {
       uniqueId: simUser || 'apoiador_vip',
       nickname: simUser || 'Apoiador VIP',
       powerKey,
@@ -161,11 +172,10 @@ export default function StudioControlPanel({
     });
   };
 
-  const updateConfigImmediate = (patch) => {
-    socket?.emit('config:update', { config: patch }, () => {
-      setSavedToast('Salvo!');
-      setTimeout(() => setSavedToast(''), 1600);
-    });
+  const updateConfigImmediate = async (patch) => {
+    await onAction('config:update', { config: patch });
+    setSavedToast('Salvo!');
+    setTimeout(() => setSavedToast(''), 1500);
   };
 
   const handlePowerPresetSelect = (powerKey, catalogKey) => {
@@ -212,73 +222,70 @@ export default function StudioControlPanel({
     });
   };
 
-  const handleSaveAiSettings = (e) => {
+  const handleSaveAiSettings = async (e) => {
     e.preventDefault();
     setSavingConfig(true);
-    socket?.emit(
-      'config:update',
-      {
-        config: {
-          quizTheme: themeInput,
-        },
-        newApiKey: apiKeyInput.trim() || undefined,
-      },
-      () => {
-        setSavingConfig(false);
-        setApiKeyInput('');
-        setSavedToast('Configurações de IA atualizadas!');
-        setTimeout(() => setSavedToast(''), 2200);
-      }
-    );
+    await onAction('config:update', {
+      config: { quizTheme: themeInput },
+      newApiKey: apiKeyInput.trim() || undefined,
+    });
+    setSavingConfig(false);
+    setApiKeyInput('');
+    setSavedToast('IA Atualizada!');
+    setTimeout(() => setSavedToast(''), 2000);
   };
 
   return (
-    <div className="flex flex-col h-full bg-slate-950/90 border border-white/10 rounded-3xl overflow-hidden shadow-2xl">
-      {/* Top OBS Link Banner + Tabs */}
-      <div className="px-4 pt-4 pb-3 border-b border-white/10 bg-slate-900/70">
+    <div className="flex flex-col h-full bg-white text-zinc-900 border-[2.5px] border-zinc-950 rounded-3xl overflow-hidden shadow-xl">
+      {/* Header & OBS Copy Bar */}
+      <div className="px-4 pt-4 pb-3 border-b-2 border-zinc-900 bg-zinc-50">
         <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
           <div>
-            <h1 className="text-base font-black tracking-tight flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 shadow shadow-cyan-400" />
-              Estúdio de Controle • TikTok Quiz IA
+            <h1 className="text-base font-black tracking-tight flex items-center gap-2 text-zinc-950">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+              Painel Automático • TikTok Quiz
             </h1>
-            <p className="text-xs text-slate-400">
-              Gerencie a live, teste presentes e copie a tela limpa 9:16 para o OBS / TikTok Live Studio
+            <p className="text-xs text-zinc-600 font-medium">
+              Detecta chat e presentes automaticamente + gera perguntas com IA OpenRouter
             </p>
           </div>
 
           <div className="flex items-center gap-2">
             {savedToast && (
-              <span className="px-2.5 py-1 rounded-lg bg-emerald-500/20 border border-emerald-400/40 text-emerald-200 text-xs font-bold">
+              <span className="px-2.5 py-1 rounded-lg bg-zinc-950 text-white text-xs font-bold">
                 ✓ {savedToast}
               </span>
             )}
             <button
               type="button"
               onClick={handleCopyOverlay}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-xs font-bold text-slate-100 transition cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white hover:bg-zinc-100 border-2 border-zinc-950 text-xs font-extrabold text-zinc-950 transition cursor-pointer"
             >
-              {copiedObs ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-cyan-300" />}
-              {copiedObs ? 'Link OBS Copiado!' : 'Copiar URL OBS'}
+              {copiedObs ? (
+                <Check className="w-3.5 h-3.5 text-emerald-600" />
+              ) : (
+                <Copy className="w-3.5 h-3.5" />
+              )}
+              {copiedObs ? 'Copiado!' : 'Copiar Link OBS'}
             </button>
             <a
-              href="/overlay"
+              href={overlayUrl}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:opacity-95 text-slate-950 text-xs font-black transition"
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-zinc-950 hover:bg-zinc-800 text-white text-xs font-extrabold transition"
             >
-              Abrir Tela 9:16 <ExternalLink className="w-3.5 h-3.5" />
+              Tela 9:16 <ExternalLink className="w-3.5 h-3.5" />
             </a>
           </div>
         </div>
 
         {/* Navigation Tabs */}
-        <div className="grid grid-cols-4 gap-1.5 p-1 rounded-2xl bg-slate-950/80 border border-white/10">
+        <div className="grid grid-cols-4 gap-1.5 p-1 rounded-2xl bg-zinc-200/80 border border-zinc-300">
           {[
-            { id: 'live', label: 'Ao Vivo & Testar', icon: Radio },
+            { id: 'live', label: 'Automação Live', icon: Radio },
             { id: 'gifts', label: '5 Presentes', icon: Gift },
-            { id: 'ai', label: 'IA & Regras', icon: Sparkles },
-            { id: 'ranking', label: 'Ranking Top 5', icon: Trophy },
+            { id: 'ai', label: 'IA & Visual', icon: Sparkles },
+            { id: 'ranking', label: 'Top 5 Placar', icon: Trophy },
           ].map((tab) => {
             const Icon = tab.icon;
             const active = activeTab === tab.id;
@@ -289,8 +296,8 @@ export default function StudioControlPanel({
                 onClick={() => setActiveTab(tab.id)}
                 className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-xs font-extrabold transition cursor-pointer ${
                   active
-                    ? 'bg-gradient-to-r from-cyan-500/25 to-fuchsia-500/25 border border-cyan-400/40 text-white shadow'
-                    : 'text-slate-400 hover:text-white hover:bg-white/5'
+                    ? 'bg-zinc-950 text-white shadow'
+                    : 'text-zinc-700 hover:text-zinc-950 hover:bg-white/60'
                 }`}
               >
                 <Icon className="w-3.5 h-3.5 shrink-0" />
@@ -303,43 +310,45 @@ export default function StudioControlPanel({
 
       {/* Scrollable Body */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {/* ================= TAB 1: AO VIVO & SIMULADOR ================= */}
+        {/* ================= TAB 1: AUTOMAÇÃO LIVE & SIMULADOR ================= */}
         {activeTab === 'live' && (
           <>
-            {/* TikTok Live Connection Card */}
-            <div className="rounded-2xl bg-slate-900/80 border border-white/10 p-3.5 space-y-3">
+            {/* TikTok Automatic Detection Card */}
+            <div className="rounded-2xl bg-zinc-50 border-2 border-zinc-950 p-3.5 space-y-3">
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <div className="flex items-center gap-2">
                   <span
                     className={`w-2.5 h-2.5 rounded-full ${
                       tiktokStatus?.connected
-                        ? 'bg-emerald-400 animate-pulse'
+                        ? 'bg-emerald-500 animate-ping'
+                        : tiktokStatus?.username && tiktokStatus?.autoConnect
+                        ? 'bg-amber-500 animate-pulse'
                         : tiktokStatus?.simulationActive
-                        ? 'bg-cyan-400 animate-pulse'
-                        : 'bg-slate-500'
+                        ? 'bg-blue-500 animate-pulse'
+                        : 'bg-zinc-400'
                     }`}
                   />
-                  <span className="text-xs font-extrabold uppercase tracking-wider text-slate-200">
+                  <span className="text-xs font-black uppercase tracking-wider text-zinc-950">
                     {tiktokStatus?.connected
-                      ? `Conectado em @${tiktokStatus.username}`
-                      : tiktokStatus?.simulationActive
-                      ? 'Plateia Simulada Ativa'
-                      : 'Conexão TikTok Live'}
+                      ? `AO VIVO CONECTADO: @${tiktokStatus.username} (${tiktokStatus.viewerCount || 0} assistindo)`
+                      : tiktokStatus?.username && tiktokStatus?.autoConnect
+                      ? `Auto-Detectando Live de @${tiktokStatus.username}...`
+                      : 'Automação de Chat & Presentes TikTok'}
                   </span>
                 </div>
 
                 <button
                   type="button"
                   onClick={handleToggleCrowd}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-extrabold border transition cursor-pointer ${
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-extrabold border-2 transition cursor-pointer ${
                     tiktokStatus?.simulationActive
-                      ? 'bg-rose-500/20 border-rose-400/50 text-rose-200'
-                      : 'bg-cyan-500/15 hover:bg-cyan-500/25 border-cyan-400/40 text-cyan-200'
+                      ? 'bg-red-600 border-red-600 text-white'
+                      : 'bg-white hover:bg-zinc-100 border-zinc-950 text-zinc-950'
                   }`}
                 >
                   <Users className="w-3.5 h-3.5" />
                   {tiktokStatus?.simulationActive
-                    ? 'Parar Plateia Bot'
+                    ? 'Parar Bots de Teste'
                     : 'Simular Plateia ao Vivo'}
                 </button>
               </div>
@@ -349,44 +358,45 @@ export default function StudioControlPanel({
                   type="text"
                   value={usernameInput}
                   onChange={(e) => setUsernameInput(e.target.value)}
-                  placeholder="@seu_usuario_tiktok (em live)"
-                  className="flex-1 rounded-xl bg-slate-950 border border-white/15 px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400"
+                  placeholder="Digite o @usuario do TikTok para auto-detectar chat e presentes"
+                  className="flex-1 rounded-xl bg-white border-2 border-zinc-900 px-3 py-2 text-xs font-bold text-zinc-950 placeholder:text-zinc-400 focus:outline-none"
                 />
-                {tiktokStatus?.connected ? (
+                {tiktokStatus?.connected ||
+                (tiktokStatus?.username && tiktokStatus?.autoConnect) ? (
                   <button
                     type="button"
                     onClick={handleDisconnectTikTok}
-                    className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-xs font-black text-white transition cursor-pointer"
+                    className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-xs font-black text-white transition cursor-pointer"
                   >
-                    Desconectar
+                    Parar
                   </button>
                 ) : (
                   <button
                     type="submit"
                     disabled={connectingTikTok}
-                    className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-400 to-blue-500 hover:opacity-95 text-slate-950 text-xs font-black transition disabled:opacity-50 cursor-pointer"
+                    className="px-4 py-2 rounded-xl bg-zinc-950 hover:bg-zinc-800 text-white text-xs font-black transition disabled:opacity-50 cursor-pointer"
                   >
-                    {connectingTikTok ? 'Conectando...' : 'Conectar Live'}
+                    {connectingTikTok ? 'Ativando...' : 'Ativar Automação'}
                   </button>
                 )}
               </form>
 
               {tiktokStatus?.error && (
-                <div className="rounded-xl bg-amber-500/15 border border-amber-400/35 px-3 py-2 text-[11px] text-amber-200">
-                  ℹ️ {tiktokStatus.error}
+                <div className="rounded-xl bg-amber-50 border border-amber-300 px-3 py-2 text-[11px] font-semibold text-amber-900">
+                  📡 {tiktokStatus.error}
                 </div>
               )}
             </div>
 
             {/* Host Direct Controls */}
-            <div className="rounded-2xl bg-slate-900/80 border border-white/10 p-3.5">
+            <div className="rounded-2xl bg-zinc-50 border-2 border-zinc-900 p-3.5">
               <div className="flex items-center justify-between mb-2.5">
-                <span className="text-xs font-extrabold uppercase tracking-wider text-slate-300">
+                <span className="text-xs font-black uppercase tracking-wider text-zinc-900">
                   Controles Rápidos da Rodada
                 </span>
                 {question?.correctOption && (
-                  <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-400/30 text-[11px] font-bold text-emerald-300">
-                    Gabarito Host: Letra {question.correctOption}
+                  <span className="px-2.5 py-0.5 rounded-lg bg-zinc-950 text-white text-[11px] font-extrabold">
+                    Resposta Certa: Letra {question.correctOption}
                   </span>
                 )}
               </div>
@@ -394,73 +404,72 @@ export default function StudioControlPanel({
               <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
                 <button
                   type="button"
-                  onClick={() => socket?.emit('quiz:pause')}
-                  className="flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-xs font-bold cursor-pointer"
+                  onClick={() => onAction('quiz:pause')}
+                  className="flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-xl bg-white hover:bg-zinc-100 border-2 border-zinc-900 text-xs font-extrabold cursor-pointer"
                 >
                   {quizState?.phase === 'PAUSED' ? (
                     <>
-                      <Play className="w-3.5 h-3.5 text-emerald-400" /> Retomar
+                      <Play className="w-3.5 h-3.5 text-emerald-600" /> Retomar
                     </>
                   ) : (
                     <>
-                      <Pause className="w-3.5 h-3.5 text-amber-300" /> Pausar
+                      <Pause className="w-3.5 h-3.5" /> Pausar
                     </>
                   )}
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => socket?.emit('quiz:skip')}
-                  className="flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/40 text-cyan-200 text-xs font-bold cursor-pointer"
+                  onClick={() => onAction('quiz:skip')}
+                  className="flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-xl bg-white hover:bg-zinc-100 border-2 border-zinc-900 text-xs font-extrabold cursor-pointer"
                 >
                   <SkipForward className="w-3.5 h-3.5" /> Nova IA
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => socket?.emit('quiz:eliminate')}
-                  className="flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-400/40 text-rose-200 text-xs font-bold cursor-pointer"
+                  onClick={() => onAction('quiz:eliminate')}
+                  className="flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-xl bg-white hover:bg-zinc-100 border-2 border-zinc-900 text-xs font-extrabold cursor-pointer"
                 >
-                  <XCircle className="w-3.5 h-3.5" /> -1 Errada
+                  <XCircle className="w-3.5 h-3.5 text-red-600" /> -1 Errada
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => socket?.emit('quiz:hint')}
-                  className="flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-200 text-xs font-bold cursor-pointer"
+                  onClick={() => onAction('quiz:hint')}
+                  className="flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-xl bg-white hover:bg-zinc-100 border-2 border-zinc-900 text-xs font-extrabold cursor-pointer"
                 >
-                  <Lightbulb className="w-3.5 h-3.5" /> Dar Dica
+                  <Lightbulb className="w-3.5 h-3.5 text-amber-600" /> Dar Dica
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => socket?.emit('quiz:reveal')}
-                  className="col-span-2 sm:col-span-1 flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-xl bg-fuchsia-500/20 hover:bg-fuchsia-500/30 border border-fuchsia-400/40 text-fuchsia-200 text-xs font-bold cursor-pointer"
+                  onClick={() => onAction('quiz:reveal')}
+                  className="col-span-2 sm:col-span-1 flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-xl bg-zinc-950 hover:bg-zinc-800 text-white text-xs font-extrabold cursor-pointer"
                 >
                   <Eye className="w-3.5 h-3.5" /> Revelar
                 </button>
               </div>
             </div>
 
-            {/* Interactive Simulator: Test all 5 Gift Powers + Chat Answers */}
-            <div className="rounded-2xl bg-gradient-to-b from-slate-900/90 to-slate-950/90 border border-cyan-500/25 p-3.5 space-y-3">
+            {/* Simulator: Test all 5 Gift Powers + Chat Answers */}
+            <div className="rounded-2xl bg-zinc-50 border-2 border-zinc-900 p-3.5 space-y-3">
               <div className="flex items-center justify-between gap-2 flex-wrap">
-                <span className="text-xs font-extrabold uppercase tracking-wider text-cyan-300">
-                  🧪 Simulador de Espectador (Chat & 5 Presentes)
+                <span className="text-xs font-black uppercase tracking-wider text-zinc-900">
+                  🧪 Testar Chat & Os 5 Presentes Agora
                 </span>
                 <div className="flex items-center gap-1.5">
-                  <span className="text-[11px] text-slate-400">Usuário:</span>
+                  <span className="text-[11px] font-bold text-zinc-600">Espectador:</span>
                   <input
                     type="text"
                     value={simUser}
                     onChange={(e) => setSimUser(e.target.value)}
                     placeholder="ex: maria_top1"
-                    className="w-32 rounded-lg bg-slate-950 border border-white/15 px-2 py-1 text-xs font-bold text-cyan-200 focus:outline-none focus:border-cyan-400"
+                    className="w-32 rounded-lg bg-white border-2 border-zinc-900 px-2 py-1 text-xs font-extrabold text-zinc-950"
                   />
                 </div>
               </div>
 
-              {/* 5 Gift Power Simulator Buttons */}
               <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
                 {POWER_ORDER.map((key) => {
                   const p = giftPowers[key];
@@ -470,28 +479,27 @@ export default function StudioControlPanel({
                       key={key}
                       type="button"
                       onClick={() => sendSimGift(key)}
-                      className="rounded-xl bg-white/[0.06] hover:bg-white/[0.13] active:scale-95 border border-white/15 p-2 flex flex-col items-center text-center transition cursor-pointer"
+                      className="rounded-xl bg-white hover:bg-zinc-950 hover:text-white active:scale-95 border-2 border-zinc-900 p-2 flex flex-col items-center text-center transition cursor-pointer group"
                     >
                       <span className="text-xl mb-0.5">{p.icon || '🎁'}</span>
-                      <span className="text-[11px] font-black text-white truncate w-full">
+                      <span className="text-[11px] font-black truncate w-full">
                         {p.displayName}
                       </span>
-                      <span className="text-[10px] text-cyan-300 font-semibold truncate w-full">
-                        {p.label}
+                      <span className="text-[10px] font-bold text-zinc-500 group-hover:text-zinc-300 truncate w-full">
+                        {p.shortLabel}
                       </span>
                     </button>
                   );
                 })}
               </div>
 
-              {/* Quick Chat A/B/C/D + Custom Comment */}
               <div className="flex flex-wrap items-center gap-2 pt-1">
                 {['A', 'B', 'C', 'D'].map((letter) => (
                   <button
                     key={letter}
                     type="button"
                     onClick={() => sendSimChat(letter)}
-                    className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-cyan-500 hover:text-slate-950 border border-white/15 text-xs font-black transition cursor-pointer"
+                    className="px-3.5 py-2 rounded-xl bg-white hover:bg-zinc-950 hover:text-white border-2 border-zinc-900 text-xs font-black transition cursor-pointer"
                   >
                     Mandar "{letter}"
                   </button>
@@ -502,18 +510,18 @@ export default function StudioControlPanel({
                     e.preventDefault();
                     sendSimChat();
                   }}
-                  className="flex-1 min-w-[180px] flex gap-1.5"
+                  className="flex-1 min-w-[170px] flex gap-1.5"
                 >
                   <input
                     type="text"
                     value={simComment}
                     onChange={(e) => setSimComment(e.target.value)}
                     placeholder="Simular comentário no chat..."
-                    className="flex-1 rounded-xl bg-slate-950 border border-white/15 px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400"
+                    className="flex-1 rounded-xl bg-white border-2 border-zinc-900 px-3 py-2 text-xs font-semibold text-zinc-950 placeholder:text-zinc-400"
                   />
                   <button
                     type="submit"
-                    className="px-3 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-black text-xs transition cursor-pointer"
+                    className="px-3 py-2 rounded-xl bg-zinc-950 hover:bg-zinc-800 text-white font-black text-xs transition cursor-pointer"
                   >
                     <Send className="w-3.5 h-3.5" />
                   </button>
@@ -522,32 +530,32 @@ export default function StudioControlPanel({
             </div>
 
             {/* Live Feed Log */}
-            <div className="rounded-2xl bg-slate-900/80 border border-white/10 p-3.5">
+            <div className="rounded-2xl bg-zinc-50 border-2 border-zinc-900 p-3.5">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-extrabold uppercase tracking-wider text-slate-300">
-                  Feed em Tempo Real (Chat & Presentes)
+                <span className="text-xs font-black uppercase tracking-wider text-zinc-900">
+                  Eventos Detectados (Chat & Presentes)
                 </span>
-                <span className="text-[11px] text-slate-500">
-                  {feedItems.length} eventos recentes
+                <span className="text-[11px] font-bold text-zinc-500">
+                  {feedItems.length} recentes
                 </span>
               </div>
 
-              <div className="max-h-52 overflow-y-auto space-y-1.5 pr-1">
+              <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
                 {feedItems.length === 0 ? (
-                  <p className="text-xs text-slate-500 py-4 text-center">
-                    Teste mandar uma resposta ou presente acima, ou ative "Simular Plateia ao Vivo"!
+                  <p className="text-xs text-zinc-500 py-4 text-center font-medium">
+                    Nenhum evento ainda. Use os botões acima para testar ou ative sua live!
                   </p>
                 ) : (
                   feedItems.map((item) => (
                     <div
                       key={item.id}
-                      className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-slate-950/70 border border-white/5 text-xs"
+                      className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-white border border-zinc-200 text-xs"
                     >
                       <div className="min-w-0 flex-1 flex items-center gap-2">
-                        <span className="font-extrabold text-cyan-300 shrink-0">
+                        <span className="font-black text-zinc-950 shrink-0">
                           @{item.user?.uniqueId}
                         </span>
-                        <span className="text-slate-200 truncate">
+                        <span className="text-zinc-700 font-medium truncate">
                           {item.kind === 'gift_power'
                             ? `${item.icon || '🎁'} enviou ${item.giftName} (x${item.repeatCount || 1})`
                             : item.kind === 'gift_unmapped'
@@ -560,7 +568,7 @@ export default function StudioControlPanel({
                         <select
                           defaultValue=""
                           onChange={(e) => handleBindIncomingGift(e.target.value, item)}
-                          className="rounded-lg bg-slate-800 border border-white/15 px-2 py-0.5 text-[10px] text-amber-200"
+                          className="rounded-lg bg-zinc-100 border border-zinc-900 px-2 py-0.5 text-[10px] font-bold text-zinc-900"
                         >
                           <option value="">Vincular poder...</option>
                           <option value="eliminateWrong">Eliminar Errada</option>
@@ -572,14 +580,14 @@ export default function StudioControlPanel({
                       ) : (
                         item.badge && (
                           <span
-                            className={`shrink-0 px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                            className={`shrink-0 px-2 py-0.5 rounded-md text-[10px] font-extrabold ${
                               item.kind === 'correct'
-                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                ? 'bg-emerald-100 text-emerald-900 border border-emerald-400'
                                 : item.kind === 'wrong'
-                                ? 'bg-rose-500/15 text-rose-300'
+                                ? 'bg-red-100 text-red-800'
                                 : item.kind === 'gift_power'
-                                ? 'bg-amber-500/20 text-amber-200 border border-amber-400/30'
-                                : 'bg-white/10 text-slate-300'
+                                ? 'bg-zinc-950 text-white'
+                                : 'bg-zinc-200 text-zinc-700'
                             }`}
                           >
                             {item.badge}
@@ -597,9 +605,9 @@ export default function StudioControlPanel({
         {/* ================= TAB 2: CONFIGURAR OS 5 PRESENTES ================= */}
         {activeTab === 'gifts' && (
           <div className="space-y-3">
-            <div className="rounded-2xl bg-cyan-500/10 border border-cyan-400/30 p-3 text-xs text-cyan-100">
-              Escolha qual presente do TikTok ativa cada um dos <strong>5 poderes interativos</strong>.
-              Toda alteração atualiza a legenda da tela da live automaticamente!
+            <div className="rounded-2xl bg-zinc-100 border-2 border-zinc-900 p-3 text-xs font-semibold text-zinc-800">
+              Escolha qual presente específico do TikTok ativa cada poder na caixa{' '}
+              <strong>"O que vale pro jogo?"</strong>.
             </div>
 
             {POWER_ORDER.map((powerKey) => {
@@ -609,25 +617,25 @@ export default function StudioControlPanel({
               return (
                 <div
                   key={powerKey}
-                  className="rounded-2xl bg-slate-900/85 border border-white/10 p-3.5 space-y-2.5"
+                  className="rounded-2xl bg-zinc-50 border-2 border-zinc-900 p-3.5 space-y-2.5"
                 >
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2.5">
                       <span className="text-2xl">{p.icon || '🎁'}</span>
                       <div>
-                        <div className="text-sm font-black text-white">{p.label}</div>
-                        <div className="text-[11px] text-slate-400">{p.description}</div>
+                        <div className="text-sm font-black text-zinc-950">{p.label}</div>
+                        <div className="text-[11px] text-zinc-600">{p.description}</div>
                       </div>
                     </div>
 
-                    <label className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-300 cursor-pointer">
+                    <label className="inline-flex items-center gap-1.5 text-xs font-extrabold text-zinc-900 cursor-pointer">
                       <input
                         type="checkbox"
                         checked={p.enabled !== false}
                         onChange={(e) =>
                           handlePowerFieldChange(powerKey, 'enabled', e.target.checked)
                         }
-                        className="accent-cyan-400 w-4 h-4"
+                        className="accent-zinc-950 w-4 h-4"
                       />
                       Ativo
                     </label>
@@ -635,15 +643,15 @@ export default function StudioControlPanel({
 
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
                     <div>
-                      <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">
-                        Catálogo Rápido TikTok
+                      <label className="block text-[10px] font-extrabold uppercase text-zinc-600 mb-1">
+                        Presente do TikTok
                       </label>
                       <select
                         value={
                           giftCatalog.find((g) => g.giftId === Number(p.giftId))?.key || ''
                         }
                         onChange={(e) => handlePowerPresetSelect(powerKey, e.target.value)}
-                        className="w-full rounded-xl bg-slate-950 border border-white/15 px-2.5 py-2 text-xs text-white"
+                        className="w-full rounded-xl bg-white border-2 border-zinc-900 px-2.5 py-2 text-xs font-bold text-zinc-950"
                       >
                         <option value="">Personalizado...</option>
                         {giftCatalog.map((g) => (
@@ -655,8 +663,8 @@ export default function StudioControlPanel({
                     </div>
 
                     <div>
-                      <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">
-                        Nome Exibido na Live
+                      <label className="block text-[10px] font-extrabold uppercase text-zinc-600 mb-1">
+                        Nome na Tela
                       </label>
                       <input
                         type="text"
@@ -664,13 +672,13 @@ export default function StudioControlPanel({
                         onChange={(e) =>
                           handlePowerFieldChange(powerKey, 'displayName', e.target.value)
                         }
-                        className="w-full rounded-xl bg-slate-950 border border-white/15 px-2.5 py-2 text-xs text-white"
+                        className="w-full rounded-xl bg-white border-2 border-zinc-900 px-2.5 py-2 text-xs font-bold text-zinc-950"
                       />
                     </div>
 
                     <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">
+                        <label className="block text-[10px] font-extrabold uppercase text-zinc-600 mb-1">
                           Ícone
                         </label>
                         <input
@@ -679,14 +687,14 @@ export default function StudioControlPanel({
                           onChange={(e) =>
                             handlePowerFieldChange(powerKey, 'icon', e.target.value)
                           }
-                          className="w-full rounded-xl bg-slate-950 border border-white/15 px-2.5 py-2 text-xs text-center text-white"
+                          className="w-full rounded-xl bg-white border-2 border-zinc-900 px-2.5 py-2 text-xs text-center font-bold text-zinc-950"
                         />
                       </div>
 
                       {powerKey === 'buyPoint' ? (
                         <div>
-                          <label className="block text-[10px] font-bold uppercase text-amber-300 mb-1">
-                            Pontos Ganhos
+                          <label className="block text-[10px] font-extrabold uppercase text-zinc-900 mb-1">
+                            Pontos
                           </label>
                           <input
                             type="number"
@@ -700,13 +708,13 @@ export default function StudioControlPanel({
                                 Math.max(1, Number(e.target.value) || 1)
                               )
                             }
-                            className="w-full rounded-xl bg-slate-950 border border-amber-400/40 px-2.5 py-2 text-xs font-bold text-amber-200"
+                            className="w-full rounded-xl bg-white border-2 border-zinc-900 px-2.5 py-2 text-xs font-black text-zinc-950"
                           />
                         </div>
                       ) : (
                         <div>
-                          <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">
-                            Gift ID TikTok
+                          <label className="block text-[10px] font-extrabold uppercase text-zinc-600 mb-1">
+                            Gift ID
                           </label>
                           <input
                             type="number"
@@ -718,7 +726,7 @@ export default function StudioControlPanel({
                                 Number(e.target.value) || 0
                               )
                             }
-                            className="w-full rounded-xl bg-slate-950 border border-white/15 px-2.5 py-2 text-xs text-white"
+                            className="w-full rounded-xl bg-white border-2 border-zinc-900 px-2.5 py-2 text-xs font-bold text-zinc-950"
                           />
                         </div>
                       )}
@@ -730,27 +738,26 @@ export default function StudioControlPanel({
           </div>
         )}
 
-        {/* ================= TAB 3: IA OPENROUTER & REGRAS ================= */}
+        {/* ================= TAB 3: IA OPENROUTER & VISUAL ================= */}
         {activeTab === 'ai' && (
           <div className="space-y-4">
-            {/* OpenRouter Status Card */}
             <form
               onSubmit={handleSaveAiSettings}
-              className="rounded-2xl bg-slate-900/85 border border-white/10 p-4 space-y-3"
+              className="rounded-2xl bg-zinc-50 border-2 border-zinc-900 p-4 space-y-3"
             >
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <div className="flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-cyan-400" />
-                  <span className="text-xs font-black uppercase tracking-wider text-white">
-                    Motor de IA OpenRouter
+                  <Sparkles className="w-4 h-4 text-zinc-950" />
+                  <span className="text-xs font-black uppercase tracking-wider text-zinc-950">
+                    IA OpenRouter (Gerador Automático)
                   </span>
                 </div>
 
                 <span
-                  className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
+                  className={`px-2.5 py-0.5 rounded-full text-[11px] font-extrabold ${
                     aiStatus?.hasApiKey
-                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/35'
-                      : 'bg-rose-500/20 text-rose-300 border border-rose-400/35'
+                      ? 'bg-emerald-100 text-emerald-900 border border-emerald-500'
+                      : 'bg-red-100 text-red-900 border border-red-400'
                   }`}
                 >
                   {aiStatus?.hasApiKey
@@ -760,35 +767,29 @@ export default function StudioControlPanel({
               </div>
 
               <div className="grid grid-cols-3 gap-2 text-center">
-                <div className="rounded-xl bg-slate-950/80 border border-white/5 p-2">
-                  <div className="text-[10px] text-slate-400">Perguntas IA Geradas</div>
-                  <div className="text-sm font-black text-cyan-300">
+                <div className="rounded-xl bg-white border border-zinc-300 p-2">
+                  <div className="text-[10px] font-bold text-zinc-500">Geradas pela IA</div>
+                  <div className="text-sm font-black text-zinc-950">
                     {aiStatus?.generatedCount ?? 0}
                   </div>
                 </div>
-                <div className="rounded-xl bg-slate-950/80 border border-white/5 p-2">
-                  <div className="text-[10px] text-slate-400">Fila Pré-Carregada</div>
-                  <div className="text-sm font-black text-emerald-300">
-                    {aiStatus?.queueSize ?? 0} prontas
+                <div className="rounded-xl bg-white border border-zinc-300 p-2">
+                  <div className="text-[10px] font-bold text-zinc-500">Fila Pronta</div>
+                  <div className="text-sm font-black text-zinc-950">
+                    {aiStatus?.queueSize ?? 0} perguntas
                   </div>
                 </div>
-                <div className="rounded-xl bg-slate-950/80 border border-white/5 p-2">
-                  <div className="text-[10px] text-slate-400">Última Fonte</div>
-                  <div className="text-xs font-black text-fuchsia-300 truncate">
-                    {aiStatus?.lastSource === 'openrouter' ? 'OpenRouter IA' : 'Banco Local'}
+                <div className="rounded-xl bg-white border border-zinc-300 p-2">
+                  <div className="text-[10px] font-bold text-zinc-500">Fonte Atual</div>
+                  <div className="text-xs font-black text-zinc-950 truncate">
+                    {aiStatus?.lastSource === 'openrouter' ? 'OpenRouter IA' : 'Banco PT-BR'}
                   </div>
                 </div>
               </div>
 
-              {aiStatus?.lastError && (
-                <div className="rounded-xl bg-amber-500/15 border border-amber-400/30 px-3 py-2 text-[11px] text-amber-200">
-                  Aviso IA: {aiStatus.lastError}
-                </div>
-              )}
-
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-300 mb-1">
+                  <label className="block text-[11px] font-extrabold text-zinc-700 mb-1">
                     Modelo da OpenRouter
                   </label>
                   <select
@@ -796,7 +797,7 @@ export default function StudioControlPanel({
                     onChange={(e) =>
                       updateConfigImmediate({ openRouterModel: e.target.value })
                     }
-                    className="w-full rounded-xl bg-slate-950 border border-white/15 px-3 py-2 text-xs text-white"
+                    className="w-full rounded-xl bg-white border-2 border-zinc-900 px-3 py-2 text-xs font-bold text-zinc-950"
                   >
                     {MODEL_OPTIONS.map((m) => (
                       <option key={m.value} value={m.value}>
@@ -807,22 +808,22 @@ export default function StudioControlPanel({
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-300 mb-1">
-                    Atualizar Chave OpenRouter (opcional)
+                  <label className="block text-[11px] font-extrabold text-zinc-700 mb-1">
+                    Trocar Chave OpenRouter (opcional)
                   </label>
                   <input
                     type="password"
                     value={apiKeyInput}
                     onChange={(e) => setApiKeyInput(e.target.value)}
-                    placeholder="Manter chave atual configurada..."
-                    className="w-full rounded-xl bg-slate-950 border border-white/15 px-3 py-2 text-xs text-white placeholder:text-slate-500"
+                    placeholder="Manter chave configurada..."
+                    className="w-full rounded-xl bg-white border-2 border-zinc-900 px-3 py-2 text-xs font-bold text-zinc-950 placeholder:text-zinc-400"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-[11px] font-bold text-slate-300 mb-1.5">
-                  Temas das Perguntas Geradas pela IA
+                <label className="block text-[11px] font-extrabold text-zinc-700 mb-1.5">
+                  Tema das Perguntas
                 </label>
                 <div className="flex flex-wrap gap-1.5 mb-2">
                   {THEME_PRESETS.map((preset) => (
@@ -830,7 +831,7 @@ export default function StudioControlPanel({
                       key={preset.label}
                       type="button"
                       onClick={() => setThemeInput(preset.value)}
-                      className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-cyan-500/20 border border-white/10 text-[11px] font-semibold text-slate-200 transition cursor-pointer"
+                      className="px-2.5 py-1 rounded-lg bg-white hover:bg-zinc-950 hover:text-white border border-zinc-900 text-[11px] font-bold transition cursor-pointer"
                     >
                       {preset.label}
                     </button>
@@ -840,103 +841,123 @@ export default function StudioControlPanel({
                   rows={2}
                   value={themeInput}
                   onChange={(e) => setThemeInput(e.target.value)}
-                  placeholder="Digite qualquer tema (ex: Futebol, Animes, Enem, Música Sertaneja...)"
-                  className="w-full rounded-xl bg-slate-950 border border-white/15 px-3 py-2 text-xs text-white"
+                  className="w-full rounded-xl bg-white border-2 border-zinc-900 px-3 py-2 text-xs font-semibold text-zinc-950"
                 />
               </div>
 
               <button
                 type="submit"
                 disabled={savingConfig}
-                className="w-full py-2.5 rounded-xl bg-gradient-to-r from-cyan-400 to-blue-500 text-slate-950 font-black text-xs hover:opacity-95 transition cursor-pointer"
+                className="w-full py-2.5 rounded-xl bg-zinc-950 hover:bg-zinc-800 text-white font-black text-xs transition cursor-pointer"
               >
-                {savingConfig ? 'Salvando...' : 'Aplicar Tema & Atualizar Fila de Perguntas IA'}
+                {savingConfig ? 'Salvando...' : 'Salvar Tema & Atualizar IA'}
               </button>
             </form>
 
-            {/* Quiz Rules & Visual Options */}
-            <div className="rounded-2xl bg-slate-900/85 border border-white/10 p-4 space-y-3">
-              <span className="text-xs font-black uppercase tracking-wider text-white block">
-                Tempo, Pontuação & Layout OBS
+            {/* Visual & Round Rules */}
+            <div className="rounded-2xl bg-zinc-50 border-2 border-zinc-900 p-4 space-y-3">
+              <span className="text-xs font-black uppercase tracking-wider text-zinc-950 block">
+                Cores, Tempo & Regras
               </span>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-300 mb-1">
-                    Tempo da Pergunta ({config.roundDurationSec || 35}s)
+                  <label className="block text-[11px] font-extrabold text-zinc-700 mb-1">
+                    Tempo da Pergunta ({config.roundDurationSec || 20}s)
                   </label>
                   <input
                     type="range"
-                    min={15}
+                    min={10}
                     max={90}
                     step={5}
-                    value={config.roundDurationSec || 35}
+                    value={config.roundDurationSec || 20}
                     onChange={(e) =>
                       updateConfigImmediate({
                         roundDurationSec: Number(e.target.value),
                       })
                     }
-                    className="w-full accent-cyan-400"
+                    className="w-full accent-zinc-950"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-300 mb-1">
-                    Tempo Revelação ({config.revealDurationSec || 6}s)
+                  <label className="block text-[11px] font-extrabold text-zinc-700 mb-1">
+                    Tempo Resposta ({config.revealDurationSec || 5}s)
                   </label>
                   <input
                     type="range"
                     min={3}
                     max={12}
                     step={1}
-                    value={config.revealDurationSec || 6}
+                    value={config.revealDurationSec || 5}
                     onChange={(e) =>
                       updateConfigImmediate({
                         revealDurationSec: Number(e.target.value),
                       })
                     }
-                    className="w-full accent-fuchsia-400"
+                    className="w-full accent-zinc-950"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-300 mb-1">
-                    Dificuldade IA
+                  <label className="block text-[11px] font-extrabold text-zinc-700 mb-1">
+                    Dificuldade
                   </label>
                   <select
                     value={config.difficulty || 'misto'}
                     onChange={(e) =>
                       updateConfigImmediate({ difficulty: e.target.value })
                     }
-                    className="w-full rounded-xl bg-slate-950 border border-white/15 px-3 py-1.5 text-xs text-white"
+                    className="w-full rounded-xl bg-white border-2 border-zinc-900 px-3 py-1.5 text-xs font-bold text-zinc-950"
                   >
-                    <option value="misto">Misto (Ideal p/ Live)</option>
-                    <option value="facil">Fácil (Alto Engajamento)</option>
+                    <option value="misto">Misto</option>
+                    <option value="facil">Fácil</option>
                     <option value="medio">Médio</option>
-                    <option value="dificil">Difícil (Desafio)</option>
+                    <option value="dificil">Difícil</option>
                   </select>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
-                <label className="flex items-center gap-2.5 p-2.5 rounded-xl bg-slate-950/70 border border-white/10 text-xs cursor-pointer">
+                <label className="flex items-center gap-2.5 p-2.5 rounded-xl bg-white border-2 border-zinc-900 text-xs cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={config.invertedTheme !== false}
+                    onChange={(e) =>
+                      updateConfigImmediate({ invertedTheme: e.target.checked })
+                    }
+                    className="accent-zinc-950 w-4 h-4"
+                  />
+                  <div>
+                    <div className="font-extrabold text-zinc-950">
+                      Cores Invertidas (Branco + Preto)
+                    </div>
+                    <div className="text-[10px] text-zinc-600">
+                      Desmarque para usar fundo preto com linhas brancas
+                    </div>
+                  </div>
+                </label>
+
+                <label className="flex items-center gap-2.5 p-2.5 rounded-xl bg-white border-2 border-zinc-900 text-xs cursor-pointer">
                   <input
                     type="checkbox"
                     checked={Boolean(config.oneAttemptPerUser)}
                     onChange={(e) =>
                       updateConfigImmediate({ oneAttemptPerUser: e.target.checked })
                     }
-                    className="accent-cyan-400 w-4 h-4"
+                    className="accent-zinc-950 w-4 h-4"
                   />
                   <div>
-                    <div className="font-bold text-white">1 tentativa por pessoa</div>
-                    <div className="text-[10px] text-slate-400">
-                      Impede chutar A, B, C e D seguidos na mesma rodada
+                    <div className="font-extrabold text-zinc-950">
+                      1 tentativa por pessoa
+                    </div>
+                    <div className="text-[10px] text-zinc-600">
+                      Evita spam de A, B, C e D seguidos
                     </div>
                   </div>
                 </label>
 
-                <label className="flex items-center gap-2.5 p-2.5 rounded-xl bg-slate-950/70 border border-white/10 text-xs cursor-pointer">
+                <label className="flex items-center gap-2.5 p-2.5 rounded-xl bg-white border-2 border-zinc-900 text-xs cursor-pointer">
                   <input
                     type="checkbox"
                     checked={Boolean(config.endRoundOnFirstCorrect)}
@@ -945,46 +966,33 @@ export default function StudioControlPanel({
                         endRoundOnFirstCorrect: e.target.checked,
                       })
                     }
-                    className="accent-cyan-400 w-4 h-4"
+                    className="accent-zinc-950 w-4 h-4"
                   />
                   <div>
-                    <div className="font-bold text-white">Morte Súbita (1º acerto encerra)</div>
-                    <div className="text-[10px] text-slate-400">
-                      Desativado = todos pontuam até acabar o tempo
+                    <div className="font-extrabold text-zinc-950">
+                      1º acerto já encerra a rodada
+                    </div>
+                    <div className="text-[10px] text-zinc-600">
+                      Modo velocidade (Morte Súbita)
                     </div>
                   </div>
                 </label>
 
-                <label className="flex items-center gap-2.5 p-2.5 rounded-xl bg-slate-950/70 border border-white/10 text-xs cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={Boolean(config.safeZoneBottom)}
-                    onChange={(e) =>
-                      updateConfigImmediate({ safeZoneBottom: e.target.checked })
-                    }
-                    className="accent-cyan-400 w-4 h-4"
-                  />
-                  <div>
-                    <div className="font-bold text-white">Margem Chat TikTok Mobile</div>
-                    <div className="text-[10px] text-slate-400">
-                      Sobe a barra inferior para não ficar atrás dos comentários
-                    </div>
-                  </div>
-                </label>
-
-                <label className="flex items-center gap-2.5 p-2.5 rounded-xl bg-slate-950/70 border border-white/10 text-xs cursor-pointer">
+                <label className="flex items-center gap-2.5 p-2.5 rounded-xl bg-white border-2 border-zinc-900 text-xs cursor-pointer">
                   <input
                     type="checkbox"
                     checked={Boolean(config.transparentBg)}
                     onChange={(e) =>
                       updateConfigImmediate({ transparentBg: e.target.checked })
                     }
-                    className="accent-cyan-400 w-4 h-4"
+                    className="accent-zinc-950 w-4 h-4"
                   />
                   <div>
-                    <div className="font-bold text-white">Fundo Transparente (OBS)</div>
-                    <div className="text-[10px] text-slate-400">
-                      Permite colocar sua câmera ou gameplay por trás no OBS
+                    <div className="font-extrabold text-zinc-950">
+                      Fundo Transparente (OBS)
+                    </div>
+                    <div className="text-[10px] text-zinc-600">
+                      Remove a grade de fundo para sobrepor webcam
                     </div>
                   </div>
                 </label>
@@ -993,34 +1001,33 @@ export default function StudioControlPanel({
           </div>
         )}
 
-        {/* ================= TAB 4: RANKING & JOGADORES ================= */}
+        {/* ================= TAB 4: RANKING TOP 5 ================= */}
         {activeTab === 'ranking' && (
           <div className="space-y-3">
-            <div className="rounded-2xl bg-slate-900/85 border border-white/10 p-3.5 flex flex-wrap items-center justify-between gap-2">
+            <div className="rounded-2xl bg-zinc-50 border-2 border-zinc-900 p-3.5 flex flex-wrap items-center justify-between gap-2">
               <div>
-                <h3 className="text-sm font-black text-white">
-                  Gerenciar Placar & Top 5 da Live
+                <h3 className="text-sm font-black text-zinc-950">
+                  Placar Geral & Top 5
                 </h3>
-                <p className="text-xs text-slate-400">
-                  Os 5 primeiros aparecem automaticamente no canto superior direito da live
+                <p className="text-xs text-zinc-600">
+                  Os 5 primeiros aparecem no card Top 5 no canto superior direito
                 </p>
               </div>
 
               <button
                 type="button"
-                onClick={() => socket?.emit('leaderboard:reset')}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-400/40 text-xs font-extrabold text-rose-200 transition cursor-pointer"
+                onClick={() => onAction('leaderboard:reset')}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-xs font-extrabold text-white transition cursor-pointer"
               >
-                <Trash2 className="w-3.5 h-3.5" /> Zerar Ranking
+                <Trash2 className="w-3.5 h-3.5" /> Zerar Placar
               </button>
             </div>
 
-            {/* Add manual player */}
             <form
               onSubmit={(e) => {
                 e.preventDefault();
                 if (!manualPlayer.trim()) return;
-                socket?.emit('leaderboard:adjust', {
+                onAction('leaderboard:adjust', {
                   uniqueId: manualPlayer.trim(),
                   nickname: manualPlayer.trim(),
                   delta: 1,
@@ -1034,21 +1041,20 @@ export default function StudioControlPanel({
                 value={manualPlayer}
                 onChange={(e) => setManualPlayer(e.target.value)}
                 placeholder="Adicionar @jogador manualmente (+1 ponto)..."
-                className="flex-1 rounded-xl bg-slate-900 border border-white/15 px-3 py-2 text-xs text-white"
+                className="flex-1 rounded-xl bg-white border-2 border-zinc-900 px-3 py-2 text-xs font-bold text-zinc-950"
               />
               <button
                 type="submit"
-                className="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs transition cursor-pointer"
+                className="px-4 py-2 rounded-xl bg-zinc-950 hover:bg-zinc-800 text-white font-black text-xs transition cursor-pointer"
               >
                 + Adicionar
               </button>
             </form>
 
-            {/* Players List */}
-            <div className="rounded-2xl bg-slate-900/85 border border-white/10 divide-y divide-white/10 overflow-hidden">
+            <div className="rounded-2xl bg-white border-2 border-zinc-900 divide-y divide-zinc-200 overflow-hidden">
               {allPlayers.length === 0 ? (
-                <div className="p-6 text-center text-xs text-slate-400">
-                  Nenhum jogador pontuou ainda nesta rodada. Assim que alguém acertar ou comprar ponto, aparecerá aqui e no Top 5!
+                <div className="p-6 text-center text-xs text-zinc-500 font-medium">
+                  Nenhum jogador pontuou ainda.
                 </div>
               ) : (
                 allPlayers.map((p) => (
@@ -1060,53 +1066,51 @@ export default function StudioControlPanel({
                       <span
                         className={`w-6 h-6 rounded-lg flex items-center justify-center font-black ${
                           p.rank <= 5
-                            ? 'bg-amber-400/20 text-amber-300 border border-amber-400/40'
-                            : 'bg-white/5 text-slate-400'
+                            ? 'bg-zinc-950 text-white'
+                            : 'bg-zinc-100 text-zinc-600'
                         }`}
                       >
                         {p.rank}º
                       </span>
                       <div className="min-w-0">
-                        <div className="font-extrabold text-white truncate">
+                        <div className="font-extrabold text-zinc-950 truncate">
                           @{p.uniqueId}
                         </div>
-                        <div className="text-[10px] text-slate-400">
+                        <div className="text-[10px] text-zinc-500 font-semibold">
                           {p.correctAnswers || 0} acertos • {p.giftsPoints || 0} pts por presentes
                         </div>
                       </div>
                     </div>
 
                     <div className="flex items-center gap-1.5 shrink-0">
-                      <span className="px-2.5 py-1 rounded-lg bg-cyan-500/20 text-cyan-200 font-black">
+                      <span className="px-2.5 py-1 rounded-lg bg-zinc-100 border border-zinc-300 text-zinc-950 font-black">
                         {p.points} pts
                       </span>
                       <button
                         type="button"
                         onClick={() =>
-                          socket?.emit('leaderboard:adjust', {
+                          onAction('leaderboard:adjust', {
                             userId: p.userId,
                             uniqueId: p.uniqueId,
                             nickname: p.nickname,
                             delta: 1,
                           })
                         }
-                        className="p-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 cursor-pointer"
-                        title="+1 ponto"
+                        className="p-1.5 rounded-lg bg-emerald-100 hover:bg-emerald-200 text-emerald-900 cursor-pointer"
                       >
                         <Plus className="w-3.5 h-3.5" />
                       </button>
                       <button
                         type="button"
                         onClick={() =>
-                          socket?.emit('leaderboard:adjust', {
+                          onAction('leaderboard:adjust', {
                             userId: p.userId,
                             uniqueId: p.uniqueId,
                             nickname: p.nickname,
                             delta: -1,
                           })
                         }
-                        className="p-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 cursor-pointer"
-                        title="-1 ponto"
+                        className="p-1.5 rounded-lg bg-red-100 hover:bg-red-200 text-red-900 cursor-pointer"
                       >
                         <Minus className="w-3.5 h-3.5" />
                       </button>
