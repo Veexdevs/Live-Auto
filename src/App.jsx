@@ -1,5 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { io } from 'socket.io-client';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import confetti from 'canvas-confetti';
 import { Volume2, VolumeX, Mic, MicOff, Maximize2, Minimize2 } from 'lucide-react';
 
@@ -9,26 +8,37 @@ import { soundManager } from './utils/soundEffects.js';
 import { executeOpenRouterBridge } from './utils/aiBridge.js';
 
 export default function App() {
+  const searchParams =
+    typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search)
+      : new URLSearchParams();
+
   const isOverlayRoute =
     typeof window !== 'undefined' &&
     (window.location.pathname.startsWith('/overlay') ||
-      new URLSearchParams(window.location.search).get('mode') === 'overlay');
+      searchParams.get('mode') === 'overlay');
 
-  const [socket, setSocket] = useState(null);
+  const urlTikTokUser = searchParams.get('user') || '';
+
   const [quizState, setQuizState] = useState(null);
   const [tiktokStatus, setTiktokStatus] = useState({});
   const [aiStatus, setAiStatus] = useState({});
   const [giftCatalog, setGiftCatalog] = useState([]);
   const [feedItems, setFeedItems] = useState([]);
   const [activeAlert, setActiveAlert] = useState(null);
+  const [serverClockOffset, setServerClockOffset] = useState(0);
 
   const [soundOn, setSoundOn] = useState(true);
   const [ttsOn, setTtsOn] = useState(false);
   const [previewOnly, setPreviewOnly] = useState(isOverlayRoute);
 
-  const alertTimeoutRef = useRef(null);
+  const seenAlertIdRef = useRef(null);
+  const alertTimerRef = useRef(null);
   const lastSpokenQuestionIdRef = useRef(null);
-  const prevTimeRef = useRef(null);
+  const bridgeBusyRef = useRef(false);
+  const workerSourceRef = useRef(null);
+
+  const role = isOverlayRoute ? 'overlay' : 'studio';
 
   useEffect(() => {
     soundManager.enabled = soundOn;
@@ -42,91 +52,212 @@ export default function App() {
     }
   }, [ttsOn]);
 
-  useEffect(() => {
-    const role = isOverlayRoute ? 'overlay' : 'studio';
-    const s = io({
-      query: { role },
-      transports: ['websocket', 'polling'],
-    });
+  const applyServerPayload = useCallback((data) => {
+    if (!data) return;
 
-    setSocket(s);
+    if (typeof data.serverNow === 'number') {
+      setServerClockOffset(data.serverNow - Date.now());
+    }
 
-    s.on('quiz:state', (st) => {
-      setQuizState(st);
-      if (Array.isArray(st?.recentFeed)) {
-        setFeedItems((prev) => (prev.length === 0 ? st.recentFeed : prev));
-      }
-    });
+    if (data.quizState) {
+      setQuizState(data.quizState);
 
-    s.on('tiktok:status', (st) => {
-      setTiktokStatus(st);
-    });
-
-    s.on('ai:status', (st) => {
-      setAiStatus(st);
-    });
-
-    s.on('gift:catalog', (cat) => {
-      setGiftCatalog(cat || []);
-    });
-
-    s.on('quiz:feed', (item) => {
-      setFeedItems((prev) => [item, ...prev].slice(0, 50));
-    });
-
-    s.on('quiz:alert', (alert) => {
-      setActiveAlert(alert);
-      if (alertTimeoutRef.current) {
-        clearTimeout(alertTimeoutRef.current);
-      }
-      alertTimeoutRef.current = setTimeout(() => {
-        setActiveAlert(null);
-      }, 4200);
-
-      if (alert?.sound) {
-        soundManager.play(alert.sound);
+      if (Array.isArray(data.quizState.recentFeed)) {
+        setFeedItems(data.quizState.recentFeed);
       }
 
-      if (
-        alert?.type === 'correct' ||
-        alert?.type === 'buypoint' ||
-        alert?.type === 'reveal'
-      ) {
-        try {
-          confetti({
-            particleCount: alert.type === 'buypoint' ? 55 : 40,
-            spread: 65,
-            origin: { y: 0.55 },
-          });
-        } catch {
-          // ignore confetti canvas issues
+      const incomingAlert = data.quizState.latestAlert;
+      if (incomingAlert && incomingAlert.id !== seenAlertIdRef.current) {
+        seenAlertIdRef.current = incomingAlert.id;
+        setActiveAlert(incomingAlert);
+
+        if (alertTimerRef.current) clearTimeout(alertTimerRef.current);
+        alertTimerRef.current = setTimeout(() => {
+          setActiveAlert(null);
+        }, 3800);
+
+        if (incomingAlert.sound) {
+          soundManager.play(incomingAlert.sound);
+        }
+
+        if (
+          incomingAlert.type === 'correct' ||
+          incomingAlert.type === 'buypoint' ||
+          incomingAlert.type === 'reveal'
+        ) {
+          try {
+            confetti({
+              particleCount: 45,
+              spread: 60,
+              origin: { y: 0.55 },
+            });
+          } catch {
+            // ignore canvas errors
+          }
         }
       }
-    });
+    }
 
-    s.on('ai:bridge:request', async ({ reqId, messages, modelCandidates, apiKey }) => {
-      const result = await executeOpenRouterBridge({
-        messages,
-        modelCandidates,
-        apiKey,
-      });
-      s.emit('ai:bridge:response', {
-        reqId,
-        ...result,
-      });
-    });
+    if (data.tiktokStatus) {
+      setTiktokStatus(data.tiktokStatus);
+    }
 
-    s.on('connect', () => {
-      s.emit('ai:bridge:ready');
-    });
+    if (data.aiStatus) {
+      setAiStatus(data.aiStatus);
+    }
+
+    if (Array.isArray(data.giftCatalog)) {
+      setGiftCatalog(data.giftCatalog);
+    }
+  }, []);
+
+  const sendAction = useCallback(
+    async (type, payload = {}) => {
+      try {
+        const res = await fetch(`/api/action?role=${role}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type, payload }),
+        });
+        const data = await res.json();
+        if (data?.ok) {
+          applyServerPayload(data);
+        }
+        return data;
+      } catch (err) {
+        console.warn('[Action Error]', err);
+        return { ok: false };
+      }
+    },
+    [role, applyServerPayload]
+  );
+
+  // Continuous state polling (lightweight & serverless-friendly)
+  useEffect(() => {
+    let active = true;
+    let firstFetch = true;
+
+    const poll = async () => {
+      try {
+        const userParam =
+          firstFetch && urlTikTokUser
+            ? `&user=${encodeURIComponent(urlTikTokUser)}`
+            : '';
+        firstFetch = false;
+        const res = await fetch(`/api/state?role=${role}${userParam}`);
+        if (!res.ok || !active) return;
+        const data = await res.json();
+        if (active) {
+          applyServerPayload(data);
+        }
+      } catch {
+        // ignore transient poll error
+      }
+    };
+
+    poll();
+    const interval = setInterval(poll, 1000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [role, urlTikTokUser, applyServerPayload]);
+
+  // Automatic SSE TikTok Live Worker (auto-connects & auto-reconnects when a TikTok @username is configured)
+  useEffect(() => {
+    const shouldRunWorker =
+      Boolean(tiktokStatus?.username) && tiktokStatus?.autoConnect !== false;
+
+    if (!shouldRunWorker) {
+      if (workerSourceRef.current) {
+        workerSourceRef.current.close();
+        workerSourceRef.current = null;
+      }
+      return;
+    }
+
+    if (workerSourceRef.current || tiktokStatus?.workerActive) {
+      return;
+    }
+
+    let reconnectTimeout = null;
+    let cancelled = false;
+
+    const connectWorker = () => {
+      if (cancelled || workerSourceRef.current) return;
+      const es = new EventSource(`/api/tiktok-worker?role=${role}`);
+      workerSourceRef.current = es;
+
+      es.addEventListener('state', (evt) => {
+        try {
+          const parsed = JSON.parse(evt.data);
+          applyServerPayload(parsed);
+        } catch {
+          // ignore
+        }
+      });
+
+      const handleEnd = () => {
+        es.close();
+        if (workerSourceRef.current === es) {
+          workerSourceRef.current = null;
+        }
+        if (!cancelled) {
+          reconnectTimeout = setTimeout(connectWorker, 1500);
+        }
+      };
+
+      es.addEventListener('cycle', handleEnd);
+      es.addEventListener('standby', () => {
+        es.close();
+        if (workerSourceRef.current === es) {
+          workerSourceRef.current = null;
+        }
+      });
+      es.onerror = handleEnd;
+    };
+
+    connectWorker();
 
     return () => {
-      if (alertTimeoutRef.current) clearTimeout(alertTimeoutRef.current);
-      s.disconnect();
+      cancelled = true;
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      if (workerSourceRef.current) {
+        workerSourceRef.current.close();
+        workerSourceRef.current = null;
+      }
     };
-  }, [isOverlayRoute]);
+  }, [
+    tiktokStatus?.username,
+    tiktokStatus?.autoConnect,
+    tiktokStatus?.workerActive,
+    role,
+    applyServerPayload,
+  ]);
 
-  // Speak new question if TTS narrator is enabled & play urgent countdown ticks
+  // Browser AI Bridge fallback ONLY when running inside network-restricted local sandbox
+  useEffect(() => {
+    const job = aiStatus?.bridgeJob;
+    if (!job || bridgeBusyRef.current) return;
+
+    bridgeBusyRef.current = true;
+    executeOpenRouterBridge(job)
+      .then((res) => {
+        if (res?.content) {
+          return sendAction('ai:push_question', {
+            content: res.content,
+            model: res.model,
+          });
+        }
+      })
+      .finally(() => {
+        setTimeout(() => {
+          bridgeBusyRef.current = false;
+        }, 1200);
+      });
+  }, [aiStatus?.bridgeJob, sendAction]);
+
+  // Speak new question if Narrator Voice is ON
   useEffect(() => {
     const q = quizState?.question;
     if (q?.id && q.id !== lastSpokenQuestionIdRef.current) {
@@ -135,30 +266,23 @@ export default function App() {
         soundManager.speakQuestion(q);
       }
     }
+  }, [quizState?.question?.id, ttsOn]);
 
-    const t = quizState?.timeRemaining;
-    if (
-      quizState?.phase === 'ACTIVE' &&
-      typeof t === 'number' &&
-      t <= 5 &&
-      t > 0 &&
-      t !== prevTimeRef.current
-    ) {
-      soundManager.play('tick');
-    }
-    prevTimeRef.current = t;
-  }, [quizState?.question?.id, quizState?.timeRemaining, quizState?.phase, ttsOn]);
-
-  // Pure OBS / TikTok Live Studio Overlay Mode (/overlay)
+  // Pure 9:16 OBS / TikTok Live Studio Overlay Mode (/overlay)
   if (isOverlayRoute) {
     const forceTransparent =
-      new URLSearchParams(window.location.search).get('bg') === 'transparent' ||
+      searchParams.get('bg') === 'transparent' ||
       Boolean(quizState?.config?.transparentBg);
+    const inverted = quizState?.config?.invertedTheme !== false;
 
     return (
       <div
         className={`w-screen h-screen flex items-center justify-center overflow-hidden ${
-          forceTransparent ? 'bg-transparent' : 'bg-[#05060f]'
+          forceTransparent
+            ? 'bg-transparent'
+            : inverted
+            ? 'bg-white'
+            : 'bg-black'
         }`}
       >
         <div className="h-full aspect-[9/16] max-w-full">
@@ -171,7 +295,7 @@ export default function App() {
                   }
                 : quizState
             }
-            tiktokStatus={tiktokStatus}
+            serverClockOffset={serverClockOffset}
             activeAlert={activeAlert}
             fullBleed
           />
@@ -181,19 +305,19 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen lg:h-screen flex flex-col bg-[#05060f] text-white overflow-x-hidden">
-      {/* Studio Top Utility Bar */}
-      <header className="px-4 py-2.5 border-b border-white/10 bg-slate-950/90 backdrop-blur-md flex items-center justify-between gap-3 shrink-0">
+    <div className="min-h-screen lg:h-screen flex flex-col bg-zinc-100 text-zinc-950 overflow-x-hidden">
+      {/* Studio Top Bar */}
+      <header className="px-4 py-2.5 border-b-2 border-zinc-900 bg-white flex items-center justify-between gap-3 shrink-0">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-cyan-400 via-blue-500 to-fuchsia-600 flex items-center justify-center font-black text-slate-950 text-sm shadow-lg shadow-cyan-500/20">
+          <div className="w-8 h-8 rounded-xl bg-zinc-950 text-white flex items-center justify-center font-black text-sm">
             Q
           </div>
           <div>
-            <span className="font-black text-sm tracking-tight">
+            <span className="font-black text-sm tracking-tight text-zinc-950">
               TikTok Live Auto Quiz
             </span>
-            <span className="hidden sm:inline-block ml-2 px-2 py-0.5 rounded-full bg-cyan-500/15 border border-cyan-400/30 text-[10px] font-bold text-cyan-300">
-              IA OpenRouter • Automático
+            <span className="hidden sm:inline-block ml-2 px-2 py-0.5 rounded-full bg-zinc-950 text-white text-[10px] font-bold">
+              IA OpenRouter • Automação Total
             </span>
           </div>
         </div>
@@ -202,10 +326,10 @@ export default function App() {
           <button
             type="button"
             onClick={() => setSoundOn((v) => !v)}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold transition cursor-pointer ${
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border-2 text-xs font-extrabold transition cursor-pointer ${
               soundOn
-                ? 'bg-emerald-500/15 border-emerald-400/40 text-emerald-200'
-                : 'bg-white/5 border-white/10 text-slate-400'
+                ? 'bg-zinc-950 border-zinc-950 text-white'
+                : 'bg-white border-zinc-300 text-zinc-500'
             }`}
           >
             {soundOn ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
@@ -215,39 +339,37 @@ export default function App() {
           <button
             type="button"
             onClick={() => setTtsOn((v) => !v)}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold transition cursor-pointer ${
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border-2 text-xs font-extrabold transition cursor-pointer ${
               ttsOn
-                ? 'bg-fuchsia-500/20 border-fuchsia-400/45 text-fuchsia-200'
-                : 'bg-white/5 border-white/10 text-slate-400'
+                ? 'bg-zinc-950 border-zinc-950 text-white'
+                : 'bg-white border-zinc-300 text-zinc-500'
             }`}
           >
             {ttsOn ? <Mic className="w-3.5 h-3.5" /> : <MicOff className="w-3.5 h-3.5" />}
-            <span className="hidden sm:inline">
-              {ttsOn ? 'Voz IA ON' : 'Narrador Voz'}
-            </span>
+            <span className="hidden sm:inline">{ttsOn ? 'Voz ON' : 'Narrador Voz'}</span>
           </button>
 
           <button
             type="button"
             onClick={() => setPreviewOnly((v) => !v)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-xs font-bold transition cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white hover:bg-zinc-100 border-2 border-zinc-950 text-xs font-extrabold transition cursor-pointer"
           >
             {previewOnly ? (
               <>
-                <Minimize2 className="w-3.5 h-3.5 text-cyan-300" /> Mostrar Painel
+                <Minimize2 className="w-3.5 h-3.5" /> Mostrar Painel
               </>
             ) : (
               <>
-                <Maximize2 className="w-3.5 h-3.5 text-cyan-300" /> Focar Tela Live
+                <Maximize2 className="w-3.5 h-3.5" /> Focar Tela 9:16
               </>
             )}
           </button>
         </div>
       </header>
 
-      {/* Main Workspace: 9:16 Live Screen + Streamer Control Panel */}
-      <main className="flex-1 min-h-0 p-3 sm:p-4 flex flex-col lg:flex-row items-center lg:items-stretch justify-center gap-4 overflow-y-auto lg:overflow-hidden">
-        {/* Left / Center: 9:16 Vertical TikTok Live Screen */}
+      {/* Main Split Workspace */}
+      <main className="flex-1 min-h-0 p-3 sm:p-4 flex flex-col lg:flex-row items-center lg:items-stretch justify-center gap-5 overflow-y-auto lg:overflow-hidden">
+        {/* Left: 9:16 Vertical TikTok Live Screen (Inverted White + Black Grid!) */}
         <div className="flex flex-col items-center justify-center shrink-0">
           <div
             className={
@@ -258,10 +380,10 @@ export default function App() {
           >
             <LiveOverlayScreen
               quizState={quizState}
-              tiktokStatus={tiktokStatus}
+              serverClockOffset={serverClockOffset}
               activeAlert={activeAlert}
               onQuickAnswerClick={(letter) => {
-                socket?.emit('simulate:chat', {
+                sendAction('simulate:chat', {
                   uniqueId: 'teste_rapido',
                   nickname: 'Teste Rápido',
                   comment: letter,
@@ -271,11 +393,11 @@ export default function App() {
           </div>
         </div>
 
-        {/* Right: Streamer Control & Simulator Panel */}
+        {/* Right: Streamer Control & Automation Panel */}
         {!previewOnly && (
           <div className="w-full max-w-3xl flex-1 min-h-[540px] lg:min-h-0 lg:h-full">
             <StudioControlPanel
-              socket={socket}
+              onAction={sendAction}
               quizState={quizState}
               tiktokStatus={tiktokStatus}
               aiStatus={aiStatus}

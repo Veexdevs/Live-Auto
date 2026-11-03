@@ -1,40 +1,28 @@
-# 🎯 TikTok Live Auto Quiz (IA OpenRouter + Presentes Interativos)
+# 🎯 TikTok Live Auto Quiz (IA OpenRouter + Automação Vercel)
 
-Sistema completo de **Live Interativa de Quiz Automático para TikTok** com geração contínua de perguntas via **OpenRouter IA**, **Ranking Top 5 em tempo real** no canto da tela e **5 poderes ativados por presentes específicos**!
-
----
-
-## ✨ Funcionalidades Principais
-
-- 🤖 **Quiz 100% Automático com IA (OpenRouter)**: Gera perguntas inéditas, 4 alternativas embaralhadas (`A`, `B`, `C`, `D`) e dicas inteligentes em Português, com fila pré-carregada e banco local de contingência (zero travamentos na live!).
-- 💬 **Pontuação pelo Chat da Live**: Quem comentar a alternativa certa (`A`, `B`, `C` ou `D`, ou o texto da resposta) ganha **+1 ponto** automaticamente, com proteção opcional contra chute repetido na mesma rodada.
-- 🏆 **Ranking Top 5 no Canto da Tela**: Placar atualizado ao vivo no canto superior direito da tela vertical (`9:16`), salvo automaticamente em disco.
-- 🎁 **5 Poderes por Presentes Específicos** (100% configuráveis no painel):
-  1. 🌹 **Rosa (`Rose`)** → **Eliminar Alternativa Errada**
-  2. 🫰 **Coração (`Finger Heart`)** → **Pedir Dica**
-  3. 🍩 **Rosquinha (`Doughnut`)** → **Ver Resposta na Tela**
-  4. 👑 **Coroa (`Little Crown`)** → **Comprar +1 Ponto no Ranking**
-  5. 🎉 **Confete (`Confetti`)** → **Gerar Outra Pergunta na Hora**
-- 🎬 **Tela Limpa 9:16 para OBS / TikTok Live Studio (`/overlay`)**: Suporte a fundo neon animado ou fundo transparente (`?bg=transparent`) para sobrepor na sua webcam ou gameplay.
-- 🧪 **Simulador Integrado**: Teste respostas, todos os 5 presentes e até uma plateia inteira de bots antes de abrir a live!
+Sistema completo de **Live Interativa de Quiz Automático para TikTok** com design **Grid Branco + Contornos Pretos (Cores Invertidas)**, geração contínua de perguntas via **IA OpenRouter**, **Ranking Top 5** no canto superior direito e **detecção automática de chat e presentes** pronta para **Vercel + Supabase + OBS Studio**.
 
 ---
 
-## 🚀 Como Rodar no seu PC (para conectar ao TikTok Real + OBS)
+## ✨ Recursos
 
-1. Copie `.env.example` para `.env` e coloque sua chave da OpenRouter:
-   ```bash
-   cp .env.example .env
-   ```
-2. Instale as dependências e inicie:
-   ```bash
-   npm install
-   npm run dev
-   ```
-3. Abra o **Estúdio de Controle** em `http://localhost:3000`:
-   - Digite seu `@usuario` do TikTok (quando já estiver ao vivo) e clique em **Conectar Live**.
-4. No **OBS Studio** ou **TikTok Live Studio**:
-   - Adicione uma fonte **Navegador (Browser Source)**
-   - URL: `http://localhost:3000/overlay`
-   - Largura: `1080` | Altura: `1920`
-   - Para fundo transparente sobre câmera/jogo: `http://localhost:3000/overlay?bg=transparent`
+- 🎨 **Visual Clean de Alto Contraste (Cores Invertidas)**: Fundo branco quadriculado, pílula de cronômetro com arco circular progressivo, card `Top 5` no canto, alternativas `A | B | C | D` e legenda `"O que vale pro jogo?"`.
+- 🤖 **IA OpenRouter Automática**: Gera perguntas inéditas, 4 alternativas embaralhadas e dicas inteligentes continuamente.
+- 📡 **Automação de Chat & Presentes na Vercel**:
+  - Quem comentar a alternativa certa (`A`, `B`, `C`, `D` ou o texto da opção) ganha **+1 ponto** no Ranking.
+  - Detecta presentes automaticamente via `tiktok-live-connector` em rota SSE Serverless (`/api/tiktok-worker`) com reconexão automática quando a live inicia.
+- 🎁 **Os 5 Poderes por Presentes Específicos**:
+  1. 🌹 **Rosa** → Eliminar alternativa errada (`-1 Errada`)
+  2. 🫰 **Coração** → Liberar dica da IA (`Ver Dica`)
+  3. 🍩 **Rosquinha** → Mostrar resposta certa (`Resposta`)
+  4. 👑 **Coroa** → Comprar ponto direto no placar (`+1 Ponto`)
+  5. 🎉 **Confete** → Pular e gerar outra pergunta (`Pular Quiz`)
+
+---
+
+## 🎬 Como Usar na Live (OBS / TikTok Live Studio)
+
+1. Acesse o painel principal da aplicação na Vercel (ou `http://localhost:3000`), digite seu `@usuario` do TikTok e clique em **Ativar Automação**.
+2. No **OBS Studio** ou **TikTok Live Studio**, adicione uma fonte **Navegador (Browser Source)**:
+   - **URL**: `https://SEU-PROJETO.vercel.app/overlay?user=SEU_USUARIO`
+   - **Largura**: `1080` | **Altura**: `1920`
